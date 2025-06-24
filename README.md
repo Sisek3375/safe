@@ -8,13 +8,12 @@ and then you can use the tool by typing :
 `./safe.sh`
 
 # usage
-you have somes commandes like :
-`./safe.sh --create`
-and following the instructions
+you have somes commandes like :  
+`./safe.sh --create` and following the instructions  
+`./safe.sh --open` for openning the safe chest  
+`./safe.sh --close` for closing the safe chest  
 
-`./safe.sh --open`
-`./safe.sh --close`
-
+obviously, you can move the file to another PC and open your hidden chest :)
 # help
 if you want to see the manual, see :
 `./safe.sh --help`
