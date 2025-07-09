@@ -1,0 +1,281 @@
+#!/bin/bash
+
+# Vérification root
+if [[ $EUID -ne 0 ]]; then
+    echo "Utilisez sudo pour exécuter ce script"
+    exit 1
+fi
+
+# Variables
+FILE="chest"
+MOUNT_POINT="/mnt/secure_chest"
+REAL_USER=$(logname || echo $SUDO_USER)
+USER_HOME="/home/$REAL_USER"
+
+#==============================================
+# PART I - INSTALLATION (5G, LUKS, ext4)
+#==============================================
+function install() {
+    echo "=== INSTALLATION ENVIRONNEMENT SÉCURISÉ ==="
+    
+    # Création fichier 5G
+    echo "Création du fichier 5G..."
+    fallocate -l 5G $FILE
+    
+    # Chiffrement LUKS
+    echo "Configuration LUKS..."
+    cryptsetup luksFormat $FILE
+    
+    # Ouverture
+    echo "Ouverture du coffre..."
+    cryptsetup open $FILE secure_chest
+    
+    # Formatage ext4
+    echo "Formatage ext4..."
+    mkfs.ext4 /dev/mapper/secure_chest
+    
+    # Montage
+    echo "Montage..."
+    mkdir -p $MOUNT_POINT
+    mount /dev/mapper/secure_chest $MOUNT_POINT
+    
+    # Structure des dossiers
+    mkdir -p $MOUNT_POINT/{ssh,gpg,config}
+    
+    # Permissions
+    chmod 700 $MOUNT_POINT
+    chmod 600 $FILE
+    
+    echo "✅ Installation terminée !"
+    
+    # Configuration automatique
+    configure_gpg
+    configure_ssh
+}
+
+#==============================================
+# PART II - CRYPTOGRAPHIE GPG
+#==============================================
+function configure_gpg() {
+    echo "=== CONFIGURATION GPG ==="
+    
+    read -p "Créer une paire de clés GPG ? (y/N) : " answer
+    if [[ $answer =~ ^[Yy]$ ]]; then
+        
+        read -p "Nom : " name
+        read -p "Email : " email
+        
+        echo "Génération de la clé GPG (suivez les instructions)..."
+        gpg --full-generate-key
+        
+        # Export clé publique
+        echo "Export de la clé publique..."
+        gpg --armor --export $email > $MOUNT_POINT/gpg/public_key.asc
+        echo "✅ Clé publique sauvée dans le coffre"
+        
+        # Export clé privée (optionnel)
+        read -p "Exporter aussi la clé privée ? (y/N) : " private
+        if [[ $private =~ ^[Yy]$ ]]; then
+            gpg --armor --export-secret-keys $email > $MOUNT_POINT/gpg/private_key.asc
+            chmod 600 $MOUNT_POINT/gpg/private_key.asc
+            echo "⚠️  Clé privée sauvée (SENSIBLE !)"
+        fi
+    fi
+}
+
+#==============================================
+# PART III - CONFIGURATION SSH
+#==============================================
+function configure_ssh() {
+    echo "=== CONFIGURATION SSH ==="
+    
+    # Fichier config SSH template
+    cat > $MOUNT_POINT/ssh/config <<EOF
+# Host serveur1
+#     HostName 192.168.1.100
+#     User admin
+#     IdentityFile $MOUNT_POINT/ssh/serveur1_rsa
+EOF
+    
+    echo "✅ Fichier config SSH créé"
+    
+    # Fichier d'alias avec evsh
+    cat > $MOUNT_POINT/config/aliases <<EOF
+alias evsh="ssh -F $MOUNT_POINT/ssh/config"
+alias evscp="scp -F $MOUNT_POINT/ssh/config"
+EOF
+    
+    # Lien symbolique
+    ln -sf $MOUNT_POINT/config/aliases $USER_HOME/.secure_aliases
+    echo "✅ Alias créés (ajoutez 'source ~/.secure_aliases' à votre .bashrc)"
+    
+    # Import configuration existante
+    import_ssh_config
+}
+
+function import_ssh_config() {
+    echo "=== IMPORT CONFIG SSH EXISTANTE ==="
+    
+    if [ ! -f "$USER_HOME/.ssh/config" ]; then
+        echo "Aucune config SSH existante trouvée"
+        return
+    fi
+    
+    echo "Hosts disponibles :"
+    grep "^Host " $USER_HOME/.ssh/config | grep -v "\*" | nl
+    
+    read -p "Numéro de l'host à importer (0 pour ignorer) : " num
+    
+    if [ "$num" -eq 0 ]; then
+        echo "Import ignoré"
+        return
+    fi
+    
+    # Récupération de l'host
+    host=$(grep "^Host " $USER_HOME/.ssh/config | grep -v "\*" | sed -n "${num}p" | awk '{print $2}')
+    
+    if [ -n "$host" ]; then
+        echo "Import de $host..."
+        
+        # Copie de la configuration
+        echo "" >> $MOUNT_POINT/ssh/config
+        awk "/^Host $host$/,/^Host |^$/ { if(/^Host / && !/^Host $host$/) exit; print }" $USER_HOME/.ssh/config >> $MOUNT_POINT/ssh/config
+        
+        # Modification du chemin de clé
+        sed -i "s|IdentityFile.*|    IdentityFile $MOUNT_POINT/ssh/${host}_rsa|" $MOUNT_POINT/ssh/config
+        
+        # Copie des clés si elles existent
+        if [ -f "$USER_HOME/.ssh/${host}_rsa" ]; then
+            cp $USER_HOME/.ssh/${host}_rsa $MOUNT_POINT/ssh/
+            cp $USER_HOME/.ssh/${host}_rsa.pub $MOUNT_POINT/ssh/
+            chmod 600 $MOUNT_POINT/ssh/${host}_rsa
+            echo "✅ Clés copiées pour $host"
+        fi
+        
+        echo "✅ Configuration importée pour $host"
+    fi
+}
+
+#==============================================
+# PART IV - UTILISATION
+#==============================================
+function open_env() {
+    echo "=== OUVERTURE ENVIRONNEMENT ==="
+    
+    if [ ! -f "$FILE" ]; then
+        echo "❌ Fichier $FILE introuvable"
+        exit 1
+    fi
+    
+    cryptsetup open $FILE secure_chest
+    mkdir -p $MOUNT_POINT
+    mount /dev/mapper/secure_chest $MOUNT_POINT
+    
+    echo "✅ Environnement ouvert dans $MOUNT_POINT"
+}
+
+function close_env() {
+    echo "=== FERMETURE ENVIRONNEMENT ==="
+    
+    umount $MOUNT_POINT
+    cryptsetup close secure_chest
+    
+    echo "✅ Environnement fermé"
+}
+
+function import_gpg() {
+    echo "=== IMPORT CLÉS GPG DU COFFRE ==="
+    
+    if [ ! -d "$MOUNT_POINT/gpg" ]; then
+        echo "❌ Ouvrez d'abord l'environnement"
+        exit 1
+    fi
+    
+    # Import clé publique
+    if [ -f "$MOUNT_POINT/gpg/public_key.asc" ]; then
+        gpg --import $MOUNT_POINT/gpg/public_key.asc
+        echo "✅ Clé publique importée"
+    fi
+    
+    # Import clé privée
+    if [ -f "$MOUNT_POINT/gpg/private_key.asc" ]; then
+        read -p "Importer la clé privée ? (y/N) : " answer
+
+        if [[ $answer =~ ^[Yy]$ ]]; then
+            gpg --import $MOUNT_POINT/gpg/private_key.asc
+            echo "✅ Clé privée importée"
+        fi
+    fi
+}
+
+function export_gpg() {
+    echo "=== EXPORT CLÉS GPG VERS COFFRE ==="
+    
+    if [ ! -d "$MOUNT_POINT/gpg" ]; then
+        echo "❌ Ouvrez d'abord l'environnement"
+        exit 1
+    fi
+    
+    echo "Clés disponibles :"
+    gpg --list-keys --with-colons | grep "^uid" | cut -d: -f10 | nl
+    
+    read -p "Email de la clé à exporter : " email
+    
+    if gpg --list-keys $email &>/dev/null; then
+        # Export clé publique
+        gpg --armor --export $email > $MOUNT_POINT/gpg/export_public_$email.asc
+        echo "✅ Clé publique exportée"
+        
+        # Export clé privée
+        read -p "Exporter aussi la clé privée ? (y/N) : " answer
+        if [[ $answer =~ ^[Yy]$ ]]; then
+            gpg --armor --export-secret-keys $email > $MOUNT_POINT/gpg/export_private_$email.asc
+            chmod 600 $MOUNT_POINT/gpg/export_private_$email.asc
+            echo "⚠️  Clé privée exportée"
+        fi
+    else
+        echo "❌ Clé non trouvée"
+    fi
+}
+
+#==============================================
+# AIDE ET MENU
+#==============================================
+function usage() {
+    echo "Usage: $0 [OPTION]"
+    echo ""
+    echo "Options:"
+    echo "  --install      Installer l'environnement sécurisé"
+    echo "  --open         Ouvrir l'environnement" 
+    echo "  --close        Fermer l'environnement"
+    echo "  --import-gpg   Importer les clés GPG du coffre"
+    echo "  --export-gpg   Exporter les clés GPG vers le coffre"
+    echo "  --help         Afficher cette aide"
+}
+
+#==============================================
+# ANALYSE DES ARGUMENTS
+#==============================================
+case "$1" in
+    --install)
+        install
+        ;;
+    --open)
+        open_env
+        ;;
+    --close)
+        close_env
+        ;;
+    --import-gpg)
+        import_gpg
+        ;;
+    --export-gpg)
+        export_gpg
+        ;;
+    --help)
+        usage
+        ;;
+    *)
+        usage
+        ;;
+esac
