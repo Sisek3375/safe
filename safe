@@ -12,6 +12,11 @@ MOUNT_POINT="/mnt/secure_chest"
 REAL_USER=$(logname || echo $SUDO_USER)
 USER_HOME="/home/$REAL_USER"
 
+GREEN="\e[32m"
+RED="\e[31m"
+YELLOW="\e[33m"
+NC="\e[0m"
+
 #==============================================
 # PART I - INSTALLATION (5G, LUKS, ext4)
 #==============================================
@@ -19,23 +24,23 @@ function install() {
     echo "=== INSTALLATION ENVIRONNEMENT SÉCURISÉ ==="
     
     # Création fichier 5G
-    echo "Création du fichier 5G..."
+    echo -e "$GREEN[INFO]$NC Création du fichier 5G..."
     fallocate -l 5G $FILE
     
     # Chiffrement LUKS
-    echo "Configuration LUKS..."
+    echo -e "$GREEN[INFO]$NC Configuration LUKS..."
     cryptsetup luksFormat $FILE
     
     # Ouverture
-    echo "Ouverture du coffre..."
+    echo -e "$GREEN[INFO]$NC Ouverture du coffre..."
     cryptsetup open $FILE secure_chest
     
     # Formatage ext4
-    echo "Formatage ext4..."
+    echo -e "$GREEN[INFO]$NC Formatage ext4..."
     mkfs.ext4 /dev/mapper/secure_chest
     
     # Montage
-    echo "Montage..."
+    echo -e "$GREEN[INFO]$NC Montage..."
     mkdir -p $MOUNT_POINT
     mount /dev/mapper/secure_chest $MOUNT_POINT
     
@@ -46,7 +51,7 @@ function install() {
     chmod 700 $MOUNT_POINT
     chmod 600 $FILE
     
-    echo "✅ Installation terminée !"
+    echo -e "$GREEN[SUCCES]$NC Installation terminée !"
     
     # Configuration automatique
     configure_gpg
@@ -59,26 +64,44 @@ function install() {
 function configure_gpg() {
     echo "=== CONFIGURATION GPG ==="
     
-    read -p "Créer une paire de clés GPG ? (y/N) : " answer
-    if [[ $answer =~ ^[Yy]$ ]]; then
+    read -p "$(echo -e "$GREEN[INFO]$NC Créer une paire de clés GPG ? (y/N) : ")" ANSWER
+    if [[ $ANSWER =~ ^[Yy]$ ]]; then
         
-        read -p "Nom : " name
-        read -p "Email : " email
+	read -p "Nom : " NAME
+        read -p "Email : " EMAIL
+        read -sp "Passphrase (laisser vide pour pas de passphrase) : " PASSPHRASE
+        echo
         
-        echo "Génération de la clé GPG (suivez les instructions)..."
-        gpg --full-generate-key
-        
+        # Création du fichier batch pour GPG
+        cat > /tmp/gpg_batch <<EOF
+Key-Type: RSA
+Key-Length: 4096
+Subkey-Type: RSA
+Subkey-Length: 4096
+Name-Real: $NAME
+Name-Email: $EMAIL
+Expire-Date: 2y
+Passphrase: $PASSPHRASE
+EOF
+
+        echo -e "$GREEN[INFO]$NC Génération de la clé GPG (suivez les instructions)..."
+        gpg --batch --generate-key /tmp/gpg_batch
+       
+	# Suppression du fichier batch
+	echo -e "$GREEN[SUCCES]$NC Clé générée avec succès !"
+	rm -f /tmp/gpg_batch
+
         # Export clé publique
-        echo "Export de la clé publique..."
-        gpg --armor --export $email > $MOUNT_POINT/gpg/public_key.asc
-        echo "✅ Clé publique sauvée dans le coffre"
+        echo -e "$GREEN[INFO]$NC Export de la clé publique..."
+        gpg --armor --export $EMAIL > $MOUNT_POINT/gpg/public_key.asc
+        echo -e "$GREEN[SUCCES]$NC Clé publique sauvée dans le coffre"
         
         # Export clé privée (optionnel)
-        read -p "Exporter aussi la clé privée ? (y/N) : " private
-        if [[ $private =~ ^[Yy]$ ]]; then
-            gpg --armor --export-secret-keys $email > $MOUNT_POINT/gpg/private_key.asc
+	read -p "$(echo -e "$YELLOW[WARNING]$NC Exporter aussi la clé privée ? (y/N) : ")" PRIVATE
+        if [[ $PRIVATE =~ ^[Yy]$ ]]; then
+            gpg --armor --export-secret-keys $EMAIL > $MOUNT_POINT/gpg/private_key.asc
             chmod 600 $MOUNT_POINT/gpg/private_key.asc
-            echo "⚠️  Clé privée sauvée (SENSIBLE !)"
+            echo -e "$GREEN[SUCCES]$NC Clé privée sauvée (SENSIBLE !)"
         fi
     fi
 }
@@ -97,7 +120,7 @@ function configure_ssh() {
 #     IdentityFile $MOUNT_POINT/ssh/serveur1_rsa
 EOF
     
-    echo "✅ Fichier config SSH créé"
+    echo -e "$GREEN[SUCCES]$NC Fichier config SSH créé"
     
     # Fichier d'alias avec evsh
     cat > $MOUNT_POINT/config/aliases <<EOF
@@ -107,7 +130,7 @@ EOF
     
     # Lien symbolique
     ln -sf $MOUNT_POINT/config/aliases $USER_HOME/.secure_aliases
-    echo "✅ Alias créés (ajoutez 'source ~/.secure_aliases' à votre .bashrc)"
+    echo -e "$GREEN[SUCCES]$NC Alias créés (ajoutez 'source ~/.secure_aliases' à votre .bashrc)"
     
     # Import configuration existante
     import_ssh_config
@@ -117,7 +140,7 @@ function import_ssh_config() {
     echo "=== IMPORT CONFIG SSH EXISTANTE ==="
     
     if [ ! -f "$USER_HOME/.ssh/config" ]; then
-        echo "Aucune config SSH existante trouvée"
+        echo -e "$RED[ERREUR]$NC Aucune config SSH existante trouvée"
         return
     fi
     
@@ -149,10 +172,10 @@ function import_ssh_config() {
             cp $USER_HOME/.ssh/${host}_rsa $MOUNT_POINT/ssh/
             cp $USER_HOME/.ssh/${host}_rsa.pub $MOUNT_POINT/ssh/
             chmod 600 $MOUNT_POINT/ssh/${host}_rsa
-            echo "✅ Clés copiées pour $host"
+            echo "$GREEN[SUCCES]$NC Clés copiées pour $host"
         fi
         
-        echo "✅ Configuration importée pour $host"
+        echo "$GREEN[SUCCES]$NC Configuration importée pour $host"
     fi
 }
 
@@ -163,7 +186,7 @@ function open_env() {
     echo "=== OUVERTURE ENVIRONNEMENT ==="
     
     if [ ! -f "$FILE" ]; then
-        echo "❌ Fichier $FILE introuvable"
+        echo -e "$RED[ERREUR]$NC Fichier $FILE introuvable"
         exit 1
     fi
     
@@ -171,39 +194,43 @@ function open_env() {
     mkdir -p $MOUNT_POINT
     mount /dev/mapper/secure_chest $MOUNT_POINT
     
-    echo "✅ Environnement ouvert dans $MOUNT_POINT"
+    echo -e "$GREEN[INFO]$NC Environnement ouvert dans $MOUNT_POINT"
 }
 
 function close_env() {
-    echo "=== FERMETURE ENVIRONNEMENT ==="
-    
-    umount $MOUNT_POINT
-    cryptsetup close secure_chest
-    
-    echo "✅ Environnement fermé"
+    echo -e "=== FERMETURE ENVIRONNEMENT ==="
+   
+    if mountpoint -q "$MOUNT_POINT"; then
+	umount $MOUNT_POINT
+    	cryptsetup close secure_chest
+    fi
+
+    echo -e "$GREEN[INFO]$NC Environnement fermé"
 }
 
 function import_gpg() {
-    echo "=== IMPORT CLÉS GPG DU COFFRE ==="
+    echo -e "=== IMPORT CLÉS GPG DU COFFRE ==="
     
     if [ ! -d "$MOUNT_POINT/gpg" ]; then
-        echo "❌ Ouvrez d'abord l'environnement"
+        echo -e "$RED[ERREUR]$NC Ouvrez d'abord l'environnement"
         exit 1
     fi
     
     # Import clé publique
+    ls -1 $MOUNT_POINT/gpg | nl
+
     if [ -f "$MOUNT_POINT/gpg/public_key.asc" ]; then
         gpg --import $MOUNT_POINT/gpg/public_key.asc
-        echo "✅ Clé publique importée"
+        echo -e "$GREEN[SUCCES]$NC Clé publique importée"
     fi
     
     # Import clé privée
     if [ -f "$MOUNT_POINT/gpg/private_key.asc" ]; then
-        read -p "Importer la clé privée ? (y/N) : " answer
+        read -p "Importer la clé privée ? (y/N) : " ANSWER
 
-        if [[ $answer =~ ^[Yy]$ ]]; then
+        if [[ $ANSWER =~ ^[Yy]$ ]]; then
             gpg --import $MOUNT_POINT/gpg/private_key.asc
-            echo "✅ Clé privée importée"
+            echo -e "$GREEN[SUCCES]$NC Clé privée importée"
         fi
     fi
 }
@@ -212,29 +239,34 @@ function export_gpg() {
     echo "=== EXPORT CLÉS GPG VERS COFFRE ==="
     
     if [ ! -d "$MOUNT_POINT/gpg" ]; then
-        echo "❌ Ouvrez d'abord l'environnement"
+        echo -e "$RED[ERREUR]$NC Ouvrez d'abord l'environnement"
         exit 1
     fi
     
     echo "Clés disponibles :"
     gpg --list-keys --with-colons | grep "^uid" | cut -d: -f10 | nl
     
-    read -p "Email de la clé à exporter : " email
+    read -p "Email de la clé à exporter : " EMAIL
     
-    if gpg --list-keys $email &>/dev/null; then
+    if [[ ! "$EMAIL" =~ @ ]]; then
+    	echo -e "$RED[ERREUR]$NC Format email invalide (@ manquant)"
+    	exit 1
+    fi
+
+    if gpg --list-keys $EMAIL; then
         # Export clé publique
-        gpg --armor --export $email > $MOUNT_POINT/gpg/export_public_$email.asc
-        echo "✅ Clé publique exportée"
+        gpg --armor --export $EMAIL > $MOUNT_POINT/gpg/export_public_$EMAIL.asc
+        echo -e "$GREEN[SUCCES]$NC Clé publique exportée"
         
         # Export clé privée
-        read -p "Exporter aussi la clé privée ? (y/N) : " answer
-        if [[ $answer =~ ^[Yy]$ ]]; then
-            gpg --armor --export-secret-keys $email > $MOUNT_POINT/gpg/export_private_$email.asc
-            chmod 600 $MOUNT_POINT/gpg/export_private_$email.asc
-            echo "⚠️  Clé privée exportée"
+        read -p "Exporter aussi la clé privée ? (y/N) : " ANSWER
+        if [[ $ANSWER =~ ^[Yy]$ ]]; then
+            gpg --armor --export-secret-keys $EMAIL > $MOUNT_POINT/gpg/export_private_$EMAIL.asc
+            chmod 600 $MOUNT_POINT/gpg/export_private_$EMAIL.asc
+            echo -e "$GREEN[SUCCES]$NC  Clé privée exportée"
         fi
     else
-        echo "❌ Clé non trouvée"
+        echo -e "$RED[ERREUR]$NC Clé non trouvée"
     fi
 }
 
@@ -242,7 +274,7 @@ function export_gpg() {
 # AIDE ET MENU
 #==============================================
 function usage() {
-    echo "Usage: $0 [OPTION]"
+    echo "Usage: sudo ./safe [OPTION]"
     echo ""
     echo "Options:"
     echo "  --install      Installer l'environnement sécurisé"
