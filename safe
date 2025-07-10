@@ -124,6 +124,8 @@ EOF
     
     # Fichier d'alias avec evsh
     cat > $MOUNT_POINT/config/aliases <<EOF
+alias ll="ls -l"
+alias la="ls -la"
 alias evsh="ssh -F $MOUNT_POINT/ssh/config"
 alias evscp="scp -F $MOUNT_POINT/ssh/config"
 EOF
