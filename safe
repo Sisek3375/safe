@@ -64,7 +64,7 @@ function install() {
 function configure_gpg() {
     echo "=== CONFIGURATION GPG ==="
     
-    read -p "$(echo -e "$GREEN[INFO]$NC Créer une paire de clés GPG ? (y/N) : ")" ANSWER
+    read -p "Créer une paire de clés GPG ? (y/N) : " ANSWER
     if [[ $ANSWER =~ ^[Yy]$ ]]; then
         
 	read -p "Nom : " NAME
@@ -97,7 +97,7 @@ EOF
         echo -e "$GREEN[SUCCES]$NC Clé publique sauvée dans le coffre"
         
         # Export clé privée (optionnel)
-	read -p "$(echo -e "$YELLOW[WARNING]$NC Exporter aussi la clé privée ? (y/N) : ")" PRIVATE
+	read -p "Exporter aussi la clé privée ? (y/N) : " PRIVATE
         if [[ $PRIVATE =~ ^[Yy]$ ]]; then
             gpg --armor --export-secret-keys $EMAIL > $MOUNT_POINT/gpg/private_key.asc
             chmod 600 $MOUNT_POINT/gpg/private_key.asc
@@ -124,8 +124,6 @@ EOF
     
     # Fichier d'alias avec evsh
     cat > $MOUNT_POINT/config/aliases <<EOF
-alias ll="ls -l"
-alias la="ls -la"
 alias evsh="ssh -F $MOUNT_POINT/ssh/config"
 alias evscp="scp -F $MOUNT_POINT/ssh/config"
 EOF
@@ -151,8 +149,12 @@ function import_ssh_config() {
     
     read -p "Numéro de l'host à importer (0 pour ignorer) : " num
     
+    if [ -n $num]; then
+	num=0
+    fi
+    
     if [ "$num" -eq 0 ]; then
-        echo "Import ignoré"
+        echo -e "$YELLOW[ATTENTION]$NC Import ignoré"
         return
     fi
     
